@@ -14,11 +14,11 @@
 
 package com.starrocks.connector.kettle.steps.starrockskettleconnector;
 
-import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 import org.pentaho.di.trans.step.BaseStepData;
 import org.pentaho.di.trans.step.StepDataInterface;
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksDataType;
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksISerializer;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DataType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.Serializer;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.StreamLoadClient;
 
 import java.util.Map;
 
@@ -27,19 +27,20 @@ import java.util.Map;
  */
 public class StarRocksKettleConnectorData extends BaseStepData implements StepDataInterface {
 
-    // Use the Stream Load method to load the number.
-    public StreamLoadManagerV2 streamLoadManager;
+    // Stream Load client (supports both StarRocks and Doris)
+    public StreamLoadClient streamLoadClient;
 
-    public StarRocksISerializer serializer;
+    // Serializer for data format conversion
+    public Serializer serializer;
 
-    // In StarRocks,If you want to implement changes to the data and partial imports, you need to add '__op'.
+    // In StarRocks/Doris, if you want to implement changes to the data and partial imports, you need to add '__op'.
     public String[] columns;
 
-    //The index corresponding to the data type of the row element.
+    // The index corresponding to the data type of the row element.
     public int[] keynrs; // nr of keylookup -value in row...
 
-    // The field name and field type of the target table in Starrocks.
-    public Map<String, StarRocksDataType> fieldtype;
+    // The field name and field type of the target table.
+    public Map<String, DataType> fieldtype;
     public String tablename;
     public String databasename;
 
@@ -47,6 +48,6 @@ public class StarRocksKettleConnectorData extends BaseStepData implements StepDa
     public StarRocksKettleConnectorData() {
         super();
 
-        streamLoadManager = null;
+        streamLoadClient = null;
     }
 }

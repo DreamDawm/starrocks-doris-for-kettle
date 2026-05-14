@@ -39,10 +39,15 @@ import org.pentaho.di.trans.step.BaseStepMeta;
 import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.StepInterface;
 import org.pentaho.di.trans.step.StepMeta;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseQueryVisitor;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DataType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.doris.DorisQueryVisitor;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksDataType;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionOptions;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionProvider;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitor;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitorAdapter;
 import org.pentaho.metastore.api.IMetaStore;
 import org.w3c.dom.Node;
 
@@ -58,7 +63,7 @@ import static org.apache.http.protocol.HttpRequestExecutor.DEFAULT_WAIT_FOR_CONT
         categoryDescription = "i18n:org.pentaho.di.trans.step:BaseStep.Category.Bulk",
         image = "StarRocks.svg",
         documentationUrl = "https://docs.starrocks.io/zh-cn/latest/introduction/StarRocks_intro",
-        i18nPackageName = "org.pentaho.di.trans.steps.starrockskettleconnector")
+        i18nPackageName = "com.starrocks.connector.kettle.steps.starrockskettleconnector")
 @InjectionSupported(localizationPrefix = "StarRocksKettleConnector.Injection.", groups = {"FIELDS"})
 public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRocksMeta {
 
@@ -82,10 +87,17 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
      */
     @Injection(name = "JDBC_URL")
     private String jdbcurl;
+
     /**
-     * Query the Starrocks field information
+     * Database type: StarRocks or Doris.
      */
-    private StarRocksQueryVisitor starRocksQueryVisitor;
+    @Injection(name = "DATABASE_TYPE")
+    private String databaseType;
+
+    /**
+     * Query the database field information (supports both StarRocks and Doris).
+     */
+    private DatabaseQueryVisitor queryVisitor;
 
     /**
      * Database name of the stream load.
@@ -222,17 +234,59 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
     }
 
     /**
-     * @return Return the Starrocks visitor
+     * @return Return the database type.
      */
+    public String getDatabaseType() {
+        return databaseType;
+    }
+
+    /**
+     * @param databaseType The database type (StarRocks or Doris).
+     */
+    public void setDatabaseType(String databaseType) {
+        this.databaseType = databaseType;
+    }
+
+    /**
+     * @return Return the parsed DatabaseType enum.
+     */
+    public DatabaseType getDatabaseTypeEnum() {
+        return DatabaseType.fromString(databaseType);
+    }
+
+    /**
+     * @return Return the query visitor
+     */
+    public DatabaseQueryVisitor getQueryVisitor() {
+        return queryVisitor;
+    }
+
+    /**
+     * @param queryVisitor The query visitor for database metadata.
+     */
+    public void setQueryVisitor(DatabaseQueryVisitor queryVisitor) {
+        this.queryVisitor = queryVisitor;
+    }
+
+    /**
+     * @return Return the Starrocks visitor (for backward compatibility)
+     * @deprecated Use getQueryVisitor() instead
+     */
+    @Deprecated
     public StarRocksQueryVisitor getStarRocksQueryVisitor() {
-        return starRocksQueryVisitor;
+        if (queryVisitor instanceof StarRocksQueryVisitorAdapter) {
+            return ((StarRocksQueryVisitorAdapter) queryVisitor).getVisitor();
+        }
+        return null;
     }
 
     /**
      * @param starRocksQueryVisitor The Starrocks visitor:Used to find field information in Starrocks.
+     * @deprecated Use setQueryVisitor() instead
      */
+    @Deprecated
     public void setStarRocksQueryVisitor(StarRocksQueryVisitor starRocksQueryVisitor) {
-        this.starRocksQueryVisitor = starRocksQueryVisitor;
+        this.queryVisitor = new StarRocksQueryVisitorAdapter(starRocksQueryVisitor, databasename, tablename);
     }
 
     /**
@@ -539,7 +593,8 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
         fieldTable = null;
         httpurl = null;
         jdbcurl = null;
-        starRocksQueryVisitor = null;
+        databaseType = "StarRocks"; // Default to StarRocks for backward compatibility
+        queryVisitor = null;
         databasename = "";
         tablename = BaseMessages.getString(PKG, "StarRocksKettleConnectorMeta.DefaultTableName");
         user = "root";
@@ -587,6 +642,10 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
                 httpurl = Arrays.asList(httpurl1.split(";"));
             }
             jdbcurl = XMLHandler.getTagValue(stepnode, "jdbcurl");
+            databaseType = XMLHandler.getTagValue(stepnode, "databasetype");
+            if (databaseType == null || databaseType.isEmpty()) {
+                databaseType = "StarRocks"; // Default for backward compatibility
+            }
             databasename = XMLHandler.getTagValue(stepnode, "databasename");
             tablename = XMLHandler.getTagValue(stepnode, "tablename");
             user = XMLHandler.getTagValue(stepnode, "user");
@@ -644,6 +703,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
         }
         retval.append("    ").append(XMLHandler.addTagValue("httpurl", httpurl1));
         retval.append("    ").append(XMLHandler.addTagValue("jdbcurl", jdbcurl));
+        retval.append("    ").append(XMLHandler.addTagValue("databasetype", databaseType));
         retval.append("    ").append(XMLHandler.addTagValue("databasename", databasename));
         retval.append("    ").append(XMLHandler.addTagValue("tablename", tablename));
         retval.append("    ").append(XMLHandler.addTagValue("user", user));
@@ -683,6 +743,10 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
                 httpurl = Arrays.asList(httpurl1.split(";"));
             }
             jdbcurl = rep.getStepAttributeString(id_step, "jdbcurl");
+            databaseType = rep.getStepAttributeString(id_step, "databasetype");
+            if (databaseType == null || databaseType.isEmpty()) {
+                databaseType = "StarRocks"; // Default for backward compatibility
+            }
             databasename = rep.getStepAttributeString(id_step, "databasename");
             tablename = rep.getStepAttributeString(id_step, "tablename");
             user = rep.getStepAttributeString(id_step, "user");
@@ -734,6 +798,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
             }
             rep.saveStepAttribute(id_transformation, id_step, "httpurl", httpurl1);
             rep.saveStepAttribute(id_transformation, id_step, "jdbcurl", jdbcurl);
+            rep.saveStepAttribute(id_transformation, id_step, "databasetype", databaseType);
             rep.saveStepAttribute(id_transformation, id_step, "databasename", databasename);
             rep.saveStepAttribute(id_transformation, id_step, "tablename", tablename);
             rep.saveStepAttribute(id_transformation, id_step, "user", user);
@@ -778,11 +843,17 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
 
         if (jdbcurl != null) {
             try {
-                if (starRocksQueryVisitor == null) {
-                    // Used to find field information in Starrocks.
+                if (queryVisitor == null) {
+                    // Create query visitor based on database type
                     StarRocksJdbcConnectionOptions jdbcConnectionOptions = new StarRocksJdbcConnectionOptions(this.jdbcurl, this.user, this.password);
                     StarRocksJdbcConnectionProvider jdbcConnectionProvider = new StarRocksJdbcConnectionProvider(jdbcConnectionOptions);
-                    starRocksQueryVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, this.databasename, this.tablename);
+                    DatabaseType dbType = getDatabaseTypeEnum();
+                    if (dbType == DatabaseType.DORIS) {
+                        queryVisitor = new DorisQueryVisitor(jdbcConnectionProvider, this.databasename, this.tablename);
+                    } else {
+                        StarRocksQueryVisitor srVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, this.databasename, this.tablename);
+                        queryVisitor = new StarRocksQueryVisitorAdapter(srVisitor, this.databasename, this.tablename);
+                    }
                 }
 
                 // Verify that the table exists.
@@ -791,7 +862,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
                             "StarRocksKettleConnectorMeta.CheckResult.TableNameOK"), stepMeta);
                     remarks.add(cr);
                     try {
-                        if (!starRocksQueryVisitor.getAllTables().contains(this.tablename)) {
+                        if (!queryVisitor.getAllTables().contains(this.tablename)) {
                             error_message = BaseMessages.getString(PKG, "StarRocksKettleConnectorMeta.CheckResult.NoNeedTable") + tablename;
                             cr = new CheckResult(CheckResultInterface.TYPE_RESULT_ERROR, error_message, stepMeta);
                             remarks.add(cr);
@@ -808,7 +879,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
                 boolean error_found = false;
                 error_message = "";
 
-                Map<String, StarRocksDataType> fielsMap = starRocksQueryVisitor.getFieldMapping();
+                Map<String, DataType> fielsMap = queryVisitor.getFieldMapping();
                 if (fielsMap != null) {
                     cr = new CheckResult(CheckResultInterface.TYPE_RESULT_OK, BaseMessages.getString(PKG, "StarRocksKettleConnectorMeta.CheckResult.TableExists"), stepMeta);
                     remarks.add(cr);
@@ -907,7 +978,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
                 error_message = "";
                 for (int i = 0; i < fieldStream.length; i++) {
                     ValueMetaInterface v = prev.searchValueMeta(fieldStream[i]);
-                    StarRocksDataType type = fielsMap.get(fieldTable[i]);
+                    DataType type = fielsMap.get(fieldTable[i]);
                     if (!isCorrectTypeMapping(v.getType(), type)) {
                         if (first) {
                             first = false;
@@ -981,12 +1052,15 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
     }
 
     public boolean isOpAutoProjectionInJson() {
-        String version = getStarRocksQueryVisitor().getStarRocksVersion();
+        if (queryVisitor == null) {
+            return true; // Default to true if no visitor available
+        }
+        String version = queryVisitor.getVersion();
         return version == null || version.length() > 0 && !version.trim().startsWith("1.");
     }
 
-    private boolean isCorrectTypeMapping(int kettleType, StarRocksDataType starrocksType) {
-        if (starrocksType == null) {
+    private boolean isCorrectTypeMapping(int kettleType, DataType dbType) {
+        if (dbType == null) {
             return false;
         }
         switch (kettleType) {
@@ -998,7 +1072,7 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
             case ValueMetaInterface.TYPE_BIGNUMBER:
             case ValueMetaInterface.TYPE_TIMESTAMP:
             case ValueMetaInterface.TYPE_INET:
-                if (typeMapping.get(kettleType).contains(starrocksType)) {
+                if (typeMapping.get(kettleType).contains(dbType)) {
                     return true;
                 }
             case ValueMetaInterface.TYPE_BINARY:
@@ -1026,16 +1100,16 @@ public class StarRocksKettleConnectorMeta extends BaseStepMeta implements StarRo
 
     }
 
-    private Map<Integer, List<StarRocksDataType>> typeMapping = new HashMap<Integer, List<StarRocksDataType>>() {
+    private Map<Integer, List<DataType>> typeMapping = new HashMap<Integer, List<DataType>>() {
         {
-            put(ValueMetaInterface.TYPE_NUMBER, Arrays.asList(StarRocksDataType.DOUBLE, StarRocksDataType.FLOAT));
-            put(ValueMetaInterface.TYPE_STRING, Arrays.asList(StarRocksDataType.VARCHAR, StarRocksDataType.CHAR, StarRocksDataType.STRING, StarRocksDataType.JSON));
-            put(ValueMetaInterface.TYPE_DATE, Arrays.asList(StarRocksDataType.DATE, StarRocksDataType.DATETIME));
-            put(ValueMetaInterface.TYPE_BOOLEAN, Arrays.asList(StarRocksDataType.BOOLEAN, StarRocksDataType.TINYINT));
-            put(ValueMetaInterface.TYPE_INTEGER, Arrays.asList(StarRocksDataType.TINYINT, StarRocksDataType.SMALLINT, StarRocksDataType.INT, StarRocksDataType.BIGINT));
-            put(ValueMetaInterface.TYPE_BIGNUMBER, Arrays.asList(StarRocksDataType.LARGEINT, StarRocksDataType.DECIMAL,StarRocksDataType.UNKNOWN));
-            put(ValueMetaInterface.TYPE_TIMESTAMP, Arrays.asList(StarRocksDataType.DATETIME, StarRocksDataType.DATE));
-            put(ValueMetaInterface.TYPE_INET, Arrays.asList(StarRocksDataType.STRING));
+            put(ValueMetaInterface.TYPE_NUMBER, Arrays.asList(DataType.DOUBLE, DataType.FLOAT));
+            put(ValueMetaInterface.TYPE_STRING, Arrays.asList(DataType.VARCHAR, DataType.CHAR, DataType.STRING, DataType.JSON));
+            put(ValueMetaInterface.TYPE_DATE, Arrays.asList(DataType.DATE, DataType.DATETIME));
+            put(ValueMetaInterface.TYPE_BOOLEAN, Arrays.asList(DataType.BOOLEAN, DataType.TINYINT));
+            put(ValueMetaInterface.TYPE_INTEGER, Arrays.asList(DataType.TINYINT, DataType.SMALLINT, DataType.INT, DataType.BIGINT));
+            put(ValueMetaInterface.TYPE_BIGNUMBER, Arrays.asList(DataType.LARGEINT, DataType.DECIMAL, DataType.UNKNOWN));
+            put(ValueMetaInterface.TYPE_TIMESTAMP, Arrays.asList(DataType.DATETIME, DataType.DATE));
+            put(ValueMetaInterface.TYPE_INET, Arrays.asList(DataType.STRING));
         }
     };
 }

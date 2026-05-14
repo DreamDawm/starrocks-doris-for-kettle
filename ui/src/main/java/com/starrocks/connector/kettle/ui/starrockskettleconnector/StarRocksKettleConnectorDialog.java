@@ -50,10 +50,14 @@ import org.pentaho.di.trans.step.BaseStepMeta;
 import org.pentaho.di.trans.step.StepDialogInterface;
 import org.pentaho.di.trans.step.StepMeta;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.StarRocksKettleConnectorMeta;
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksDataType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseQueryVisitor;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DataType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.doris.DorisQueryVisitor;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionOptions;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionProvider;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitor;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitorAdapter;
 import org.pentaho.di.ui.core.dialog.EnterMappingDialog;
 import org.pentaho.di.ui.core.dialog.ErrorDialog;
 import org.pentaho.di.ui.core.gui.GUIResource;
@@ -81,6 +85,10 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
     private Label wlJdbcUrl;
     private TextVar wJdbcUrl;
     private FormData fdlJdbcUrl, fdJdbcUrl;
+
+    private Label wlDatabaseType;
+    private CCombo wDatabaseType;
+    private FormData fdlDatabaseType, fdDatabaseType;
 
     private Label wlDatabaseName;
     private TextVar wDatabaseName;
@@ -265,6 +273,28 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         fdJdbcUrl.top = new FormAttachment(wHttpurl, margin * 2);
         wJdbcUrl.setLayoutData(fdJdbcUrl);
 
+        // Database Type line...
+        wlDatabaseType = new Label(shell, SWT.RIGHT);
+        wlDatabaseType.setText(BaseMessages.getString(PKG, "StarRocksKettleConnectorDialog.DatabaseType.Label"));
+        props.setLook(wlDatabaseType);
+        fdlDatabaseType = new FormData();
+        fdlDatabaseType.left = new FormAttachment(0, 0);
+        fdlDatabaseType.right = new FormAttachment(middle, -margin);
+        fdlDatabaseType.top = new FormAttachment(wJdbcUrl, margin * 2);
+        wlDatabaseType.setLayoutData(fdlDatabaseType);
+
+        wDatabaseType = new CCombo(shell, SWT.BORDER);
+        props.setLook(wDatabaseType);
+        wDatabaseType.addModifyListener(lsMod);
+        wDatabaseType.setItems(new String[]{"StarRocks", "Doris"});
+        wDatabaseType.select(0); // select StarRocks by default
+        wDatabaseType.addFocusListener(lsFocusLost);
+        fdDatabaseType = new FormData();
+        fdDatabaseType.left = new FormAttachment(middle, 0);
+        fdDatabaseType.top = new FormAttachment(wJdbcUrl, margin * 2);
+        fdDatabaseType.right = new FormAttachment(100, 0);
+        wDatabaseType.setLayoutData(fdDatabaseType);
+
         // DataBase Name line...
         wlDatabaseName = new Label(shell, SWT.RIGHT);
         wlDatabaseName.setText(BaseMessages.getString(PKG, "StarRocksKettleConnectorDialog.DatabaseName.Label"));
@@ -272,7 +302,7 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         fdlDatabaseName = new FormData();
         fdlDatabaseName.left = new FormAttachment(0, 0);
         fdlDatabaseName.right = new FormAttachment(middle, -margin);
-        fdlDatabaseName.top = new FormAttachment(wJdbcUrl, margin * 2);
+        fdlDatabaseName.top = new FormAttachment(wDatabaseType, margin * 2);
         wlDatabaseName.setLayoutData(fdlDatabaseName);
 
         wDatabaseName = new TextVar(transMeta, shell, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
@@ -282,7 +312,7 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         fdDatabaseName = new FormData();
         fdDatabaseName.left = new FormAttachment(middle, 0);
         fdDatabaseName.right = new FormAttachment(100, 0);
-        fdDatabaseName.top = new FormAttachment(wJdbcUrl, margin * 2);
+        fdDatabaseName.top = new FormAttachment(wDatabaseType, margin * 2);
         wDatabaseName.setLayoutData(fdDatabaseName);
 
         // Table Name line...
@@ -808,18 +838,29 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         input.setDatabasename(wDatabaseName.getText());
         input.setUser(wUser.getText());
         input.setPassword(wPassword.getText());
-        if (input.getStarRocksQueryVisitor() == null) {
+        input.setDatabaseType(wDatabaseType.getText());
+        if (input.getQueryVisitor() == null) {
             try {
                 StarRocksJdbcConnectionOptions jdbcConnectionOptions = new StarRocksJdbcConnectionOptions(input.getJdbcurl(), input.getUser(), input.getPassword());
                 StarRocksJdbcConnectionProvider jdbcConnectionProvider = new StarRocksJdbcConnectionProvider(jdbcConnectionOptions);
-                input.setStarRocksQueryVisitor(new StarRocksQueryVisitor(jdbcConnectionProvider, input.getDatabasename(), input.getTablename()));
+                DatabaseType dbType = input.getDatabaseTypeEnum();
+                DatabaseQueryVisitor queryVisitor;
+                if (dbType == DatabaseType.DORIS) {
+                    queryVisitor = new DorisQueryVisitor(jdbcConnectionProvider, input.getDatabasename(), input.getTablename());
+                } else {
+                    StarRocksQueryVisitor srVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, input.getDatabasename(), input.getTablename());
+                    queryVisitor = new StarRocksQueryVisitorAdapter(srVisitor, input.getDatabasename(), input.getTablename());
+                }
+                input.setQueryVisitor(queryVisitor);
 
-                targetFields = new ArrayList<>(input.getStarRocksQueryVisitor().getFieldMapping().keySet());
+                targetFields = new ArrayList<>(queryVisitor.getFieldMapping().keySet());
             } catch (Exception e) {
                 new ErrorDialog(shell,
                         BaseMessages.getString(PKG, "StarRocksKettleConnectorDialog.DoMapping.UnableToFindTargetFields.Title"),
                         BaseMessages.getString(PKG, "StarRocksKettleConnectorDialog.DoMapping.UnableToFindTargetFields.Message"), e);
             }
+        } else {
+            targetFields = new ArrayList<>(input.getQueryVisitor().getFieldMapping().keySet());
         }
 
         String[] inputNames = new String[sourceFields.size()];
@@ -913,6 +954,7 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         if (log.isDebug()) {
             logDebug(BaseMessages.getString(PKG, "StarRocksKettleConnectorDialog.Log.GettingKeyInfo"));
         }
+        wDatabaseType.setText(Const.NVL(input.getDatabaseType(), "StarRocks"));
         wFormat.setText(Const.NVL(input.getFormat(), ""));
         wColumnSeparator.setText(Const.NVL((input.getColumnSeparator()), "\t"));
         wJsonPaths.setText(Const.NVL(input.getJsonpaths(), ""));
@@ -973,8 +1015,9 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
         Runnable fieldLoader = new Runnable() {
             @Override
             public void run() {
-                if (!wJdbcUrl.isDisposed() && !wTableName.isDisposed() && !wDatabaseName.isDisposed() && !wUser.isDisposed() && !wPassword.isDisposed()) {
+                if (!wJdbcUrl.isDisposed() && !wTableName.isDisposed() && !wDatabaseName.isDisposed() && !wUser.isDisposed() && !wPassword.isDisposed() && !wDatabaseType.isDisposed()) {
                     final String jdbcUrl = wJdbcUrl.getText(), tableName = wTableName.getText(), databaseName = wDatabaseName.getText(), user = wUser.getText(), password = wPassword.getText();
+                    final String dbTypeStr = wDatabaseType.getText();
 
                     // Clear
                     for (ColumnInfo colInfo : tableFieldColumns) {
@@ -984,9 +1027,16 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
                         try {
                             StarRocksJdbcConnectionOptions jdbcConnectionOptions = new StarRocksJdbcConnectionOptions(jdbcUrl, user, password);
                             StarRocksJdbcConnectionProvider jdbcConnectionProvider = new StarRocksJdbcConnectionProvider(jdbcConnectionOptions);
-                            StarRocksQueryVisitor starRocksQueryVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, databaseName, tableName);
+                            DatabaseType dbType = DatabaseType.fromString(dbTypeStr);
+                            DatabaseQueryVisitor queryVisitor;
+                            if (dbType == DatabaseType.DORIS) {
+                                queryVisitor = new DorisQueryVisitor(jdbcConnectionProvider, databaseName, tableName);
+                            } else {
+                                StarRocksQueryVisitor srVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, databaseName, tableName);
+                                queryVisitor = new StarRocksQueryVisitorAdapter(srVisitor, databaseName, tableName);
+                            }
 
-                            Map<String, StarRocksDataType> fieldMap = starRocksQueryVisitor.getFieldMapping();
+                            Map<String, DataType> fieldMap = queryVisitor.getFieldMapping();
                             if (null != fieldMap) {
                                 String[] fieldNames = fieldMap.keySet().toArray(new String[0]);
                                 for (ColumnInfo colInfo : tableFieldColumns) {
@@ -1045,6 +1095,7 @@ public class StarRocksKettleConnectorDialog extends BaseStepDialog implements St
 
         inf.allocate(nrfields);
 
+        inf.setDatabaseType(wDatabaseType.getText());
         inf.setFormat(wFormat.getText());
         inf.setColumnSeparator(wColumnSeparator.getText());
         inf.setJsonpaths(wJsonPaths.getText());

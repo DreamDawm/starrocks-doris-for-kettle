@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pentaho-plugins>
+  <step-plugin>
+    <plugin-class>com.starrocks.connector.kettle.steps.starrockskettleconnector.StarRocksKettleConnectorMeta</plugin-class>
+  </step-plugin>
+</pentaho-plugins>

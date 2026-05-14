@@ -15,13 +15,14 @@
 package com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.Serializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
 
-public class StarRocksCsvSerializer implements StarRocksISerializer {
+public class StarRocksCsvSerializer implements Serializer {
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksCsvSerializer.class);
 
     private final String columnSeparator;
@@ -38,16 +39,22 @@ public class StarRocksCsvSerializer implements StarRocksISerializer {
         int idx = 0;
         for (Object val : values) {
             if (null == val) {
-                strval = "\\N";
+                // NULL value: output empty string, Doris will treat it as NULL
+                strval = "";
             } else if (val instanceof Map || val instanceof List) {
                 try {
                     strval = objectMapper.writeValueAsString(val);
                     LOG.debug("When csv is serialized, data of type map or list appears converted to {}", strval);
+                    // Remove special characters from JSON string
+                    strval = removeSpecialCharacters(strval);
                 } catch (Exception e) {
                     LOG.debug("A conversion JSON error occurred during CSV serialization :{}", e.getMessage());
+                    strval = "";
                 }
             } else {
                 strval = val.toString();
+                // Remove special characters (newlines, carriage returns, tabs) from string values
+                strval = removeSpecialCharacters(strval);
             }
             sb.append(strval);
             if (idx++ < values.length - 1) {
@@ -55,5 +62,24 @@ public class StarRocksCsvSerializer implements StarRocksISerializer {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * Remove special characters (newlines, carriage returns, tabs) from string values.
+     * These characters would break CSV row parsing in Doris Stream Load.
+     */
+    private String removeSpecialCharacters(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        StringBuilder cleaned = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            // Remove newlines, carriage returns, and tabs
+            if (c != '\n' && c != '\r' && c != '\t') {
+                cleaned.append(c);
+            }
+        }
+        return cleaned.toString();
     }
 }

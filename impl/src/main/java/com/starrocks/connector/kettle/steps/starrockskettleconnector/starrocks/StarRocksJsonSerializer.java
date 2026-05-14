@@ -15,13 +15,14 @@
 package com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.Serializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class StarRocksJsonSerializer implements StarRocksISerializer {
+public class StarRocksJsonSerializer implements Serializer {
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksJsonSerializer.class);
     private final String[] fieldNames;
     private ObjectMapper objectMapper=new ObjectMapper();

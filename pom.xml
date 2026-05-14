@@ -27,14 +27,11 @@ limitations under the License.
     <properties>
         <org.eclipse.swt.version>4.6</org.eclipse.swt.version>
         <jface.version>3.3.0-I20070606-0010</jface.version>
-        <pdi.version>9.5.0.0-240</pdi.version>
+        <pdi.version>9.4.0.0-343</pdi.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
     </properties>
-
-    <parent>
-        <groupId>org.pentaho.di.plugins</groupId>
-        <artifactId>pdi-plugins</artifactId>
-        <version>9.5.0.0-240</version>
-    </parent>
 
     <artifactId>starrocks-kettle-connector</artifactId>
     <groupId>com.starrocks</groupId>
@@ -70,7 +67,7 @@ limitations under the License.
             <dependency>
                 <groupId>com.starrocks</groupId>
                 <artifactId>starrocks-stream-load-sdk</artifactId>
-                <version>1.0-SNAPSHOT</version>
+                <version>1.0</version>
                 <classifier>jar-with-dependencies</classifier>
             </dependency>
 
@@ -119,7 +116,7 @@ limitations under the License.
                 </executions>
                 <configuration>
                     <consoleOutput>true</consoleOutput>
-                    <excludeSubProjects>false</excludeSubProjects>
+                    <excludeSubProjects>true</excludeSubProjects>
                     <numUnapprovedLicenses>0</numUnapprovedLicenses>
                     <licenses>
                         <license implementation="org.apache.rat.analysis.license.SimplePatternBasedLicense">
@@ -143,6 +140,7 @@ limitations under the License.
                         <exclude>**/resources/**</exclude>
                         <exclude>target/**</exclude>
                         <exclude>**/logs/**</exclude>
+                        <exclude>pdi-ce-9.4.0.0-343/**</exclude>
                     </excludes>
                 </configuration>
             </plugin>
@@ -150,31 +148,22 @@ limitations under the License.
     </build>
     <repositories>
         <repository>
-            <id>pentaho-public</id>
-            <name>Pentaho Public</name>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo.maven.apache.org/maven2/</url>
+        </repository>
+        <repository>
+            <id>pentaho</id>
+            <name>Pentaho Maven Repository</name>
             <url>https://repo.orl.eng.hitachivantara.com/artifactory/pnt-mvn/</url>
-            <releases>
-                <enabled>true</enabled>
-                <updatePolicy>daily</updatePolicy>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
-                <updatePolicy>interval:15</updatePolicy>
-            </snapshots>
         </repository>
     </repositories>
 
     <pluginRepositories>
         <pluginRepository>
-            <id>pentaho-public-plugins</id>
-            <name>Pentaho Public Plugins</name>
-            <url>https://repo.orl.eng.hitachivantara.com/artifactory/pnt-mvn/</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-            <releases>
-                <updatePolicy>never</updatePolicy>
-            </releases>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo.maven.apache.org/maven2/</url>
         </pluginRepository>
     </pluginRepositories>
 </project>

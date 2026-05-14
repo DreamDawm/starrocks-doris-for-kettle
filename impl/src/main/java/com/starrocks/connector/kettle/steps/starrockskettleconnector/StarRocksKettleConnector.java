@@ -14,17 +14,20 @@
 
 package com.starrocks.connector.kettle.steps.starrockskettleconnector;
 
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseQueryVisitor;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DatabaseType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.DataType;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.Serializer;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.StreamLoadClient;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.StreamLoadClientFactory;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.StreamLoadConfig;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.doris.DorisQueryVisitor;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksCsvSerializer;
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksDataType;
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksISerializer;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionOptions;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJdbcConnectionProvider;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksJsonSerializer;
 import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitor;
-import com.starrocks.data.load.stream.StreamLoadDataFormat;
-import com.starrocks.data.load.stream.properties.StreamLoadProperties;
-import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
-import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
+import com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks.StarRocksQueryVisitorAdapter;
 import org.pentaho.di.core.exception.KettleException;
 import org.pentaho.di.core.row.ValueMetaInterface;
 import org.pentaho.di.i18n.BaseMessages;
@@ -76,8 +79,8 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 return false;
             }
 
-            if (data.streamLoadManager.getException() != null) {
-                logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Log.AsyncWriteError"), data.streamLoadManager.getException());
+            if (data.streamLoadClient.getException() != null) {
+                logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Log.AsyncWriteError"), data.streamLoadClient.getException());
                 setErrors(1);
                 stopAll();
                 setOutputDone();
@@ -95,7 +98,7 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 data.serializer = getSerializer(meta);
             }
             String serializedValue = data.serializer.serialize(transform(r, meta.getEnableUpsertDelete()));
-            data.streamLoadManager.write(null, data.databasename, data.tablename, serializedValue);
+            data.streamLoadClient.write(data.databasename, data.tablename, serializedValue);
 
             putRow(getInputRowMeta(), r);
             incrementLinesOutput();
@@ -111,12 +114,12 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
     }
 
     private void closeOutput() throws Exception {
-        data.streamLoadManager.flush();
-        data.streamLoadManager.close();
-        if (data.streamLoadManager.getException() != null) {
-            logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailFlush"), data.streamLoadManager.getException());
+        data.streamLoadClient.flush();
+        data.streamLoadClient.close();
+        if (data.streamLoadClient.getException() != null) {
+            logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailFlush"), data.streamLoadClient.getException());
         }
-        data.streamLoadManager = null;
+        data.streamLoadClient = null;
     }
 
     // Data type conversion.
@@ -124,7 +127,7 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
         Object[] values = new Object[data.keynrs.length + (supportUpsertDelete ? 1 : 0)];
         for (int i = 0; i < data.keynrs.length; i++) {
             ValueMetaInterface sourceMeta = getInputRowMeta().getValueMeta(data.keynrs[i]);
-            StarRocksDataType dataType = data.fieldtype.get(meta.getFieldTable()[i]);
+            DataType dataType = data.fieldtype.get(meta.getFieldTable()[i]);
             values[i] = typeConversion(sourceMeta, dataType, r[i]);
         }
         if (supportUpsertDelete && meta.getUpsertOrDelete() != null && meta.getUpsertOrDelete().length() != 0) {
@@ -141,7 +144,7 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
      * @param r
      * @return
      */
-    public Object typeConversion(ValueMetaInterface sourceMeta, StarRocksDataType type, Object r) throws KettleException {
+    public Object typeConversion(ValueMetaInterface sourceMeta, DataType type, Object r) throws KettleException {
         if (r == null) {
             return null;
         }
@@ -171,11 +174,11 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                     } else {
                         integerValue = sourceMeta.getInteger(r);
                     }
-                    if (integerValue >= Byte.MIN_VALUE && integerValue <= Byte.MAX_VALUE && type == StarRocksDataType.TINYINT) {
+                    if (integerValue >= Byte.MIN_VALUE && integerValue <= Byte.MAX_VALUE && type == DataType.TINYINT) {
                         return integerValue.byteValue();
-                    } else if (integerValue >= Short.MIN_VALUE && integerValue <= Short.MAX_VALUE && type == StarRocksDataType.SMALLINT) {
+                    } else if (integerValue >= Short.MIN_VALUE && integerValue <= Short.MAX_VALUE && type == DataType.SMALLINT) {
                         return integerValue.shortValue();
-                    } else if (integerValue >= Integer.MIN_VALUE && integerValue <= Integer.MAX_VALUE && type == StarRocksDataType.INT) {
+                    } else if (integerValue >= Integer.MIN_VALUE && integerValue <= Integer.MAX_VALUE && type == DataType.INT) {
                         return integerValue.intValue();
                     } else {
                         return integerValue;
@@ -199,11 +202,11 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 case ValueMetaInterface.TYPE_DATE:
                     SimpleDateFormat sourceDateFormatter = sourceMeta.getDateFormat();
                     SimpleDateFormat dateFormatter = null;
-                    if (type == StarRocksDataType.DATE) {
-                        // StarRocks DATE type format: 'yyyy-MM-dd'
+                    if (type == DataType.DATE) {
+                        // DATE type format: 'yyyy-MM-dd'
                         dateFormatter = new SimpleDateFormat("yyyy-MM-dd");
                     } else {
-                        // StarRocks DATETIME type format: 'yyyy-MM-dd HH:mm:ss'
+                        // DATETIME type format: 'yyyy-MM-dd HH:mm:ss'
                         dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                     }
                     Date dateValue = null;
@@ -218,11 +221,11 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 case ValueMetaInterface.TYPE_TIMESTAMP:
                     SimpleDateFormat sourceTimestampFormatter = sourceMeta.getDateFormat();
                     SimpleDateFormat timeStampFormatter = null;
-                    if (type == StarRocksDataType.DATE) {
-                        // StarRocks DATE type format: 'yyyy-MM-dd'
+                    if (type == DataType.DATE) {
+                        // DATE type format: 'yyyy-MM-dd'
                         timeStampFormatter = new SimpleDateFormat("yyyy-MM-dd");
                     } else {
-                        // StarRocks DATETIME type format: 'yyyy-MM-dd HH:mm:ss'
+                        // DATETIME type format: 'yyyy-MM-dd HH:mm:ss'
                         timeStampFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                     }
                     java.sql.Timestamp timestampValue = null;
@@ -267,21 +270,28 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 data.columns = new String[meta.getFieldTable().length];
                 System.arraycopy(meta.getFieldTable(), 0, data.columns, 0, meta.getFieldTable().length);
             }
-            if (meta.getStarRocksQueryVisitor() == null) {
-                // Used to find field information in Starrocks.
+            if (meta.getQueryVisitor() == null) {
+                // Used to find field information in database.
                 StarRocksJdbcConnectionOptions jdbcConnectionOptions = new StarRocksJdbcConnectionOptions(meta.getJdbcurl(), meta.getUser(), meta.getPassword());
                 StarRocksJdbcConnectionProvider jdbcConnectionProvider = new StarRocksJdbcConnectionProvider(jdbcConnectionOptions);
-                meta.setStarRocksQueryVisitor(new StarRocksQueryVisitor(jdbcConnectionProvider, meta.getDatabasename(), meta.getTablename()));
+                DatabaseType dbType = meta.getDatabaseTypeEnum();
+                if (dbType == DatabaseType.DORIS) {
+                    meta.setQueryVisitor(new DorisQueryVisitor(jdbcConnectionProvider, meta.getDatabasename(), meta.getTablename()));
+                } else {
+                    StarRocksQueryVisitor srVisitor = new StarRocksQueryVisitor(jdbcConnectionProvider, meta.getDatabasename(), meta.getTablename());
+                    meta.setQueryVisitor(new StarRocksQueryVisitorAdapter(srVisitor, meta.getDatabasename(), meta.getTablename()));
+                }
             }
             try {
-                data.streamLoadManager = new StreamLoadManagerV2(getProperties(meta, data), true);
-                data.streamLoadManager.init();
+                StreamLoadConfig config = buildStreamLoadConfig(meta, data);
+                data.streamLoadClient = StreamLoadClientFactory.createClient(meta.getDatabaseTypeEnum(), config);
+                data.streamLoadClient.init();
             } catch (Exception e) {
                 logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailConnManager"), e);
                 return false;
             }
             try {
-                data.fieldtype = meta.getStarRocksQueryVisitor().getFieldMapping();
+                data.fieldtype = meta.getQueryVisitor().getFieldMapping();
             } catch (Exception e) {
                 logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.MissingStarRocksFieldType"));
                 return false;
@@ -294,8 +304,8 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
 
     }
 
-    public StarRocksISerializer getSerializer(StarRocksKettleConnectorMeta meta) {
-        StarRocksISerializer serializer;
+    public Serializer getSerializer(StarRocksKettleConnectorMeta meta) {
+        Serializer serializer;
         if (meta.getFormat().equals("CSV")) {
             serializer = new StarRocksCsvSerializer(meta.getColumnSeparator());
         } else if (meta.getFormat().equals("JSON")) {
@@ -315,29 +325,53 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
         return serializer;
     }
 
-    // Get the property values needed for Stream Load loading.
-    public StreamLoadProperties getProperties(StarRocksKettleConnectorMeta meta, StarRocksKettleConnectorData data) {
-        StreamLoadDataFormat dataFormat;
-        if (meta.getFormat().equals("CSV")) {
-            dataFormat = StreamLoadDataFormat.CSV;
-        } else if (meta.getFormat().equals("JSON")) {
-            dataFormat = StreamLoadDataFormat.JSON;
-        } else {
-            throw new RuntimeException("data format are not support");
+    // Build StreamLoadConfig for Stream Load client.
+    public StreamLoadConfig buildStreamLoadConfig(StarRocksKettleConnectorMeta meta, StarRocksKettleConnectorData data) {
+        Map<String, String> headerProperties = new HashMap<>();
+        // By default, using json format should enable strip_outer_array and ignore_json_size,
+        // which will simplify the configurations
+        if (meta.getFormat().equalsIgnoreCase("JSON")) {
+            if (!headerProperties.containsKey("strip_outer_array")) {
+                headerProperties.put("strip_outer_array", "true");
+            }
+            if (!headerProperties.containsKey("ignore_json_size")) {
+                headerProperties.put("ignore_json_size", "true");
+            }
+            if (!headerProperties.containsKey("format")) {
+                headerProperties.put("format", "json");
+            }
+            if (meta.getJsonpaths() != null && meta.getJsonpaths().length() != 0) {
+                headerProperties.put("jsonpaths", meta.getJsonpaths());
+            }
         }
-        StreamLoadTableProperties.Builder defaultTablePropertiesBuilder = StreamLoadTableProperties.builder()
-                .database(meta.getDatabasename())
-                .table(meta.getTablename())
-                .streamLoadDataFormat(dataFormat)
-                .chunkLimit(meta.getChunkLimit())
-                .enableUpsertDelete(meta.getEnableUpsertDelete());
-        // Add the '__op' field
+        if (meta.getPartialUpdate()) {
+            if (!headerProperties.containsKey("partial_update")) {
+                headerProperties.put("partial_update", "true");
+            }
+        }
+
+        if (meta.getHeaderProperties() != null && meta.getHeaderProperties().length() != 0) {
+            try {
+                String[] properties = meta.getHeaderProperties().split(";");
+                for (String property : properties) {
+                    String[] parts = property.split(":");
+                    if (parts.length >= 2) {
+                        headerProperties.put(parts[0], parts[1]);
+                    }
+                }
+            } catch (RuntimeException e) {
+                throw new RuntimeException(BaseMessages.getString(PKG, "StarRocksKettleConnectorMeta.Exception.UnableProperties"));
+            }
+        }
+
+        // Build columns header if needed
+        String columnsHeader = null;
         if (data.columns != null) {
             // don't need to add "columns" header in following cases
-            // 1. use csv format but the kettle and starrocks schemas are aligned
-            // 2. use json format, except that it's loading o a primary key table for StarRocks 1.x
+            // 1. use csv format but the kettle and target database schemas are aligned
+            // 2. use json format, except that it's loading to a primary key table for older versions
             boolean noNeedAddColumnsHeader;
-            if (dataFormat instanceof StreamLoadDataFormat.CSVFormat) {
+            if (meta.getFormat().equalsIgnoreCase("CSV")) {
                 noNeedAddColumnsHeader = false;
             } else {
                 noNeedAddColumnsHeader = !meta.getEnableUpsertDelete() || meta.isOpAutoProjectionInJson();
@@ -351,77 +385,37 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                 } else {
                     headerColumns = data.columns;
                 }
-                String cols = Arrays.stream(headerColumns)
+                columnsHeader = Arrays.stream(headerColumns)
                         .map(f -> String.format("`%s`", f.trim().replace("`", "")))
                         .collect(Collectors.joining(","));
-                defaultTablePropertiesBuilder.columns(cols);
             } else {
-                String cols = Arrays.stream(data.columns)
+                columnsHeader = Arrays.stream(data.columns)
                         .map(f -> String.format("`%s`", f.trim().replace("`", "")))
                         .collect(Collectors.joining(","));
-                defaultTablePropertiesBuilder.columns(cols);
             }
         }
 
-        Map<String, String> streamLoadProperties = new HashMap<>();
-        // By default, using json format should enable strip_outer_array and ignore_json_size,
-        // which will simplify the configurations
-        if (dataFormat instanceof StreamLoadDataFormat.JSONFormat) {
-            if (!streamLoadProperties.containsKey("strip_outer_array")) {
-                streamLoadProperties.put("strip_outer_array", "true");
-            }
-            if (!streamLoadProperties.containsKey("ignore_json_size")) {
-                streamLoadProperties.put("ignore_json_size", "true");
-            }
-            if (!streamLoadProperties.containsKey("format")) {
-                streamLoadProperties.put("format", "json");
-            }
-            if (meta.getJsonpaths() != null && meta.getJsonpaths().length() != 0) {
-                streamLoadProperties.put("jsonpaths", meta.getJsonpaths());
-            }
-        }
-        if (meta.getPartialUpdate()) {
-            if (!streamLoadProperties.containsKey("partial_update")) {
-                streamLoadProperties.put("partial_update", "true");
-            }
-        }
-
-        if (meta.getHeaderProperties() != null && meta.getHeaderProperties().length() != 0) {
-            try {
-                String[] properties = meta.getHeaderProperties().split(";");
-                for (String property : properties) {
-                    streamLoadProperties.put(property.split(":")[0], property.split(":")[0]);
-                }
-            } catch (RuntimeException e) {
-                throw new RuntimeException(BaseMessages.getString(PKG, "StarRocksKettleConnectorMeta.Exception.UnableProperties"));
-            }
-        }
-
-        StreamLoadProperties.Builder builder = StreamLoadProperties.builder()
-                .labelPrefix("StarRocks-Kettle")
-                .loadUrls(meta.getHttpurl().toArray(new String[0]))
+        StreamLoadConfig.Builder builder = StreamLoadConfig.builder()
+                .databaseType(meta.getDatabaseTypeEnum())
+                .httpUrls(meta.getHttpurl())
                 .jdbcUrl(meta.getJdbcurl())
-                .defaultTableProperties(defaultTablePropertiesBuilder.build())
+                .database(meta.getDatabasename())
+                .table(meta.getTablename())
                 .username(meta.getUser())
                 .password(meta.getPassword())
-                .cacheMaxBytes(meta.getMaxbytes())
-                .ioThreadCount(meta.getIoThreadCount())
-                .waitForContinueTimeoutMs(meta.getWaitForContinueTimeout())
-                .scanningFrequency(meta.getScanningFrequency())
+                .format(meta.getFormat())
+                .columnSeparator(meta.getColumnSeparator())
+                .maxBytes(meta.getMaxbytes())
+                .maxFilterRatio(meta.getMaxFilterRatio())
                 .connectTimeout(meta.getConnecttimeout())
-                .version(meta.getStarRocksQueryVisitor().getStarRocksVersion())
-                .maxRetries(0)
-                .expectDelayTime(expectDelayTime)
-                .addHeaders(streamLoadProperties)
-                .addHeader("timeout", String.valueOf(meta.getTimeout()))
-                .addHeader("max_filter_ratio", String.valueOf(meta.getMaxFilterRatio()));
-
-        if (dataFormat instanceof StreamLoadDataFormat.CSVFormat) {
-            builder.addHeader("column_separator", meta.getColumnSeparator());
-        }
+                .timeout(meta.getTimeout())
+                .ioThreadCount(meta.getIoThreadCount())
+                .scanningFrequency(meta.getScanningFrequency())
+                .waitForContinueTimeoutMs(meta.getWaitForContinueTimeout())
+                .headerProperties(headerProperties)
+                .columns(columnsHeader);
 
         return builder.build();
-
     }
 
     @Override
@@ -430,13 +424,13 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
         data = (StarRocksKettleConnectorData) sdi;
 
         try {
-            if (data.streamLoadManager != null) {
-                data.streamLoadManager.flush();
-                if (data.streamLoadManager.getException() != null) {
-                    logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailFlush"), data.streamLoadManager.getException());
+            if (data.streamLoadClient != null) {
+                data.streamLoadClient.flush();
+                if (data.streamLoadClient.getException() != null) {
+                    logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailFlush"), data.streamLoadClient.getException());
                 }
-                data.streamLoadManager.close();
-                data.streamLoadManager = null;
+                data.streamLoadClient.close();
+                data.streamLoadClient = null;
             }
         } catch (Exception e) {
             setErrors(1L);

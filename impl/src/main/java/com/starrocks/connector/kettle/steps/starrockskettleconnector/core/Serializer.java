@@ -12,14 +12,18 @@
  * limitations under the License.
  */
 
-package com.starrocks.connector.kettle.steps.starrockskettleconnector.starrocks;
-
-import com.starrocks.connector.kettle.steps.starrockskettleconnector.core.Serializer;
+package com.starrocks.connector.kettle.steps.starrockskettleconnector.core;
 
 /**
- * Serializer interface for StarRocks data format.
- * @deprecated Use {@link Serializer} instead.
+ * Interface for data serialization.
+ * Converts row data to string format for Stream Load.
  */
-@Deprecated
-public interface StarRocksISerializer extends Serializer {
+public interface Serializer {
+
+    /**
+     * Serialize an array of values to a string.
+     * @param values the array of values to serialize
+     * @return the serialized string
+     */
+    String serialize(Object[] values);
 }
