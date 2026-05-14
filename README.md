@@ -1,12 +1,16 @@
-# starrocks-connector-for-kettle
+# StarRocks & Doris Connector for Kettle
 
-# Why
+一个 Pentaho Kettle (PDI) 插件，用于将数据从各种数据源高效导入到 StarRocks 或 Apache Doris 数据库。插件通过 Stream Load 协议实现高性能数据写入。
 
-目前，StarRocks兼容并支持DataX、Flink以及Spark这三种高效的数据处理框架，从而实现数据的有效写入到StarRocks中。然而，需要注意的是，这三种框架的操作均基于命令行或代码，这可能对非技术人员构成一定的挑战。因此，为了增加易用性并优化用户体验，我们正在扩展StarRocks的Kettle Connector，以实现直观的、可视化的数据导入操作，使得无论技术背景如何，用户都能够方便快捷地进行数据导入。
+## 功能特性
 
-Kettle是一个流行的ETL工具，它提供了一种可视化的图形界面，用户可以通过拖拽组件、配置参数等方式来构建数据处理流程。这种直观的操作方式大大简化了数据处理和导入的过程，使得用户可以更加便捷地处理数据。此外，Kettle还提供了丰富的操作组件库，用户可以根据自己的需求选择合适的组件，实现各种复杂的数据处理任务。
-
-通过扩展StarRocks对Kettle的连接功能，用户不仅可以实现更方便的数据导入，还可以利用Kettle的操作组件库，提供更便捷、更灵活的数据处理和导入方式。用户可以更加方便地从各种数据源读取数据，然后通过Kettle的数据处理流程，将处理后的数据导入到StarRocks。
+- ✅ 支持 **StarRocks** 和 **Apache Doris** 两种数据库
+- ✅ 可视化配置界面，无需编写代码
+- ✅ 支持 CSV 和 JSON 两种数据格式
+- ✅ 支持 UPSERT 和 DELETE 操作
+- ✅ 支持部分更新 (Partial Update)
+- ✅ 自动处理数据中的换行符等特殊字符
+- ✅ 支持 HTTP 307 重定向
 
 # What
 
@@ -612,6 +616,82 @@ StarRocks > select * from detailDemo;
 - 将项目交到真实用户进行测试，根据测试反馈完善项目。
 - 支持实现HLL和BITMAP类型的数据导入。
 
-## LICENSE
+## 快速开始
 
-The connector is under the [Apache License 2.0](https://github.com/nzm798/starrocks-connector-for-kettle/blob/main/LICENSE.txt).
+### 构建插件
+
+```bash
+# 克隆项目
+git clone git@github.com:DreamDawm/starrocks-doris-for-kettle.git
+
+# 构建插件包（跳过测试）
+mvn clean package -Dmaven.test.skip=true -Drat.skip=true
+```
+
+构建产物位于 `assemblies/plugin/target/starrocks-kettle-connector-plugins-1.0-SNAPSHOT-plugins.zip`
+
+### 安装插件
+
+1. 将构建的 ZIP 包解压到 `data-integration/plugins/` 目录
+2. 手动添加 MySQL JDBC 驱动到 `starrocks-kettle-connector/lib/` 目录
+3. 启动 Kettle Spoon，在转换步骤中即可看到 StarRocks Kettle Connector
+
+### 配置参数
+
+| 参数 | 是否必填 | 默认值 | 描述 |
+|------|----------|--------|------|
+| 步骤名称 | 是 | StarRocks Kettle Connector | 该步骤名称 |
+| Http URL | 是 | 无 | FE 的 HTTP Server 地址，格式：`host:port;host2:port2` |
+| JDBC URL | 是 | 无 | FE 的 MySQL Server 地址，格式：`jdbc:mysql://host:port` |
+| 数据库类型 | 是 | StarRocks | 支持 StarRocks 或 Doris |
+| 数据库名称 | 是 | 无 | 目标数据库的名称 |
+| 表名称 | 是 | 无 | 目标数据表的名称 |
+| 用户名 | 是 | 无 | 访问数据库的用户名 |
+| 密码 | 否 | 无 | 访问数据库的密码 |
+| 格式 | 是 | CSV | Stream Load 数据格式（CSV 或 JSON） |
+| 列分隔符 | 否 | \t | CSV 格式的列分隔符 |
+
+## 技术栈
+
+- **Kettle/PDI**: 9.4.0.0-343
+- **Java**: JDK 11
+- **Maven**: 3+
+- **Apache HttpClient**: 4.5.13 (Doris Stream Load)
+- **StarRocks Stream Load SDK**: 1.0-SNAPSHOT
+
+## 架构设计
+
+```
+starrocks-connector-for-kettle/
+├── impl/                       # 核心实现
+│   └── steps/starrockskettleconnector/
+│       ├── core/               # 核心抽象层（接口、配置、工厂）
+│       ├── doris/              # Doris 实现（HTTP Stream Load）
+│       └── starrocks/          # StarRocks 实现（SDK 封装）
+└── ui/                         # UI 模块（Kettle Dialog）
+```
+
+插件使用工厂模式根据数据库类型创建对应的 Stream Load 客户端：
+- **StarRocks**: 使用 `StreamLoadManagerV2` SDK
+- **Doris**: 使用 Apache HttpClient 直接发送 HTTP PUT 请求
+
+## 使用场景
+
+1. **数据集成**: 从不同数据源抽取数据，清洗转换后加载到 StarRocks/Doris
+2. **复杂数据处理**: 利用 Kettle 可视化界面设计 ETL 工作流程
+3. **数据转换和整合**: 对原始数据进行复杂转换以满足分析需求
+
+## 注意事项
+
+- NULL 值会自动处理为空字符串，Doris/StarRocks 会将其视为 NULL
+- 数据中的换行符、回车符、制表符会被自动去除，避免 CSV 解析问题
+- Doris Stream Load 支持 HTTP 307 重定向自动跟随
+- Kettle 版本建议使用 9.3.0.0-349 或更高版本（Java 11）
+
+## 许可证
+
+本项目基于 [Apache License 2.0](LICENSE.txt) 开源。
+
+---
+
+> 详细使用说明和示例请参考原版 README 或项目文档。
