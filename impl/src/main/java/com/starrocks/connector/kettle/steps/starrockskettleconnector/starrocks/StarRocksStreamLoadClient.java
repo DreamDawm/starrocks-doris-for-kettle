@@ -21,6 +21,8 @@ import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
+import org.pentaho.di.core.logging.LogChannel;
+import org.pentaho.di.core.logging.LogChannelInterface;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -33,23 +35,44 @@ import java.util.stream.Collectors;
  */
 public class StarRocksStreamLoadClient implements StreamLoadClient {
 
+    private static final String LOG_CHANNEL_ID = "StarRocksStreamLoadClient";
+    private LogChannelInterface log;
+
     private StreamLoadManagerV2 streamLoadManager;
     private final StreamLoadConfig config;
+    private long totalRecordsWritten = 0;
+    private long lastLoggedRecords = 0;
 
     public StarRocksStreamLoadClient(StreamLoadConfig config) {
         this.config = config;
     }
 
     @Override
+    public void setLog(LogChannelInterface log) {
+        this.log = log;
+    }
+
+    @Override
     public void init() throws Exception {
+        if (log == null) {
+            log = new LogChannel(LOG_CHANNEL_ID);
+        }
         StreamLoadProperties properties = buildStarRocksProperties(config);
         streamLoadManager = new StreamLoadManagerV2(properties, true);
         streamLoadManager.init();
+        log.logBasic("StarRocks Stream Load client initialized for table: " + config.getDatabase() + "." + config.getTable());
     }
 
     @Override
     public void write(String database, String table, String data) throws Exception {
         streamLoadManager.write(null, database, table, data);
+        totalRecordsWritten++;
+
+        // Log progress every 10000 records
+        if (totalRecordsWritten - lastLoggedRecords >= 10000) {
+            log.logBasic("Written " + totalRecordsWritten + " records to StarRocks");
+            lastLoggedRecords = totalRecordsWritten;
+        }
     }
 
     @Override
@@ -66,6 +89,7 @@ public class StarRocksStreamLoadClient implements StreamLoadClient {
             streamLoadManager.close();
             streamLoadManager = null;
         }
+        log.logBasic("StarRocks Stream Load client closed, total records written: " + totalRecordsWritten);
     }
 
     @Override

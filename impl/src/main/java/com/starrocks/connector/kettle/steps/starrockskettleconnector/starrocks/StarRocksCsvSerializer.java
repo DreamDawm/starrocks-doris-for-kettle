@@ -39,8 +39,9 @@ public class StarRocksCsvSerializer implements Serializer {
         int idx = 0;
         for (Object val : values) {
             if (null == val) {
-                // NULL value: output empty string, Doris will treat it as NULL
-                strval = "";
+                // NULL value: use \N to represent null in Doris/StarRocks Stream Load
+                // \N is the standard null representation, empty string "" would be treated as empty string
+                strval = "\\N";
             } else if (val instanceof Map || val instanceof List) {
                 try {
                     strval = objectMapper.writeValueAsString(val);

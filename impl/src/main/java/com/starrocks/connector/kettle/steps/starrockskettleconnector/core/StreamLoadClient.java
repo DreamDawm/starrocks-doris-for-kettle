@@ -14,11 +14,19 @@
 
 package com.starrocks.connector.kettle.steps.starrockskettleconnector.core;
 
+import org.pentaho.di.core.logging.LogChannelInterface;
+
 /**
  * Interface for Stream Load client operations.
  * Abstracts StarRocks and Doris SDK differences.
  */
 public interface StreamLoadClient {
+
+    /**
+     * Set the log channel for logging output.
+     * @param log the log channel from the calling step
+     */
+    void setLog(LogChannelInterface log);
 
     /**
      * Initialize the client.

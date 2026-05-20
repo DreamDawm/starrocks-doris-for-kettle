@@ -46,6 +46,7 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -60,6 +61,7 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
      * Calculate the latest submission time。
      */
     private long expectDelayTime = 30000L;
+    private long lastLoggedRows = 0;
 
     public StarRocksKettleConnector(StepMeta stepMeta, StepDataInterface stepDataInterface, int copyNr, TransMeta transMeta, Trans trans) {
         super(stepMeta, stepDataInterface, copyNr, transMeta, trans);
@@ -96,12 +98,21 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
                     data.keynrs[i] = getInputRowMeta().indexOfValue(meta.getFieldStream()[i]);
                 }
                 data.serializer = getSerializer(meta);
+                logBasic("Starting data load to " + meta.getDatabaseTypeEnum().name() + " table: " + meta.getDatabasename() + "." + meta.getTablename());
             }
             String serializedValue = data.serializer.serialize(transform(r, meta.getEnableUpsertDelete()));
             data.streamLoadClient.write(data.databasename, data.tablename, serializedValue);
 
             putRow(getInputRowMeta(), r);
             incrementLinesOutput();
+
+            // Log progress periodically
+            long linesOutput = getLinesOutput();
+            if (linesOutput - lastLoggedRows >= 10000) {
+                logBasic("Processed " + linesOutput + " rows");
+                lastLoggedRows = linesOutput;
+            }
+
             return true;
 
         } catch (Exception e) {
@@ -285,13 +296,29 @@ public class StarRocksKettleConnector extends BaseStep implements StepInterface 
             try {
                 StreamLoadConfig config = buildStreamLoadConfig(meta, data);
                 data.streamLoadClient = StreamLoadClientFactory.createClient(meta.getDatabaseTypeEnum(), config);
+                data.streamLoadClient.setLog(getLogChannel());
                 data.streamLoadClient.init();
             } catch (Exception e) {
                 logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailConnManager"), e);
                 return false;
             }
             try {
+                // Validate that the table exists before proceeding
+                List<String> allTables = meta.getQueryVisitor().getAllTables();
+                if (!allTables.contains(meta.getTablename())) {
+                    logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.TableNotFound", meta.getDatabasename(), meta.getTablename()));
+                    return false;
+                }
+            } catch (Exception e) {
+                logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.FailValidateTable"), e);
+                return false;
+            }
+            try {
                 data.fieldtype = meta.getQueryVisitor().getFieldMapping();
+                if (data.fieldtype == null || data.fieldtype.isEmpty()) {
+                    logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.MissingStarRocksFieldType"));
+                    return false;
+                }
             } catch (Exception e) {
                 logError(BaseMessages.getString(PKG, "StarRocksKettleConnector.Message.MissingStarRocksFieldType"));
                 return false;

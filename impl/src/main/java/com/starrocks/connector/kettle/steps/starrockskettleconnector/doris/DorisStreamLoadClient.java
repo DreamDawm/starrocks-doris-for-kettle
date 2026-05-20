@@ -30,6 +30,7 @@ import org.apache.http.impl.client.LaxRedirectStrategy;
 import org.apache.http.util.EntityUtils;
 import org.pentaho.di.core.logging.LogChannel;
 import org.pentaho.di.core.logging.LogChannelInterface;
+import org.pentaho.di.core.logging.LogLevel;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -61,14 +62,23 @@ public class DorisStreamLoadClient implements StreamLoadClient {
     private volatile boolean running = false;
     private String currentDatabase;
     private String currentTable;
+    private long totalRecordsWritten = 0;
+    private long lastLoggedRecords = 0;
 
     public DorisStreamLoadClient(StreamLoadConfig config) {
         this.config = config;
     }
 
     @Override
+    public void setLog(LogChannelInterface log) {
+        this.log = log;
+    }
+
+    @Override
     public void init() throws Exception {
-        log = new LogChannel(LOG_CHANNEL_ID);
+        if (log == null) {
+            log = new LogChannel(LOG_CHANNEL_ID);
+        }
         // Use LaxRedirectStrategy to automatically follow 307 redirects for PUT/POST
         httpClient = HttpClients.custom()
                 .setMaxConnTotal(config.getIoThreadCount())
@@ -90,7 +100,7 @@ public class DorisStreamLoadClient implements StreamLoadClient {
             }
         }, config.getScanningFrequency(), config.getScanningFrequency(), TimeUnit.MILLISECONDS);
 
-        log.logBasic("Doris Stream Load client initialized");
+        log.logBasic("Doris Stream Load client initialized for table: " + config.getDatabase() + "." + config.getTable());
     }
 
     @Override
@@ -110,14 +120,19 @@ public class DorisStreamLoadClient implements StreamLoadClient {
             throw new IllegalArgumentException("Table name is not configured. Please set the TABLE_NAME in the connector configuration.");
         }
 
-        log.logBasic("Writing data to Doris: database=" + currentDatabase + ", table=" + currentTable + ", dataLength=" + data.length());
         dataQueue.put(data);
+        totalRecordsWritten++;
 
         // Check if we need to flush based on size
         // Simple implementation: flush when queue is half full
         if (dataQueue.size() > 5000) {
-            log.logBasic("Queue size > 5000, triggering flush");
             flushInternal();
+        }
+
+        // Log progress every 10000 records
+        if (totalRecordsWritten - lastLoggedRecords >= 10000) {
+            log.logBasic("Written " + totalRecordsWritten + " records to Doris");
+            lastLoggedRecords = totalRecordsWritten;
         }
     }
 
@@ -128,7 +143,6 @@ public class DorisStreamLoadClient implements StreamLoadClient {
 
     private void flushInternal() throws Exception {
         if (dataQueue.isEmpty()) {
-            log.logDebug("Queue is empty, skipping flush");
             return;
         }
 
@@ -136,18 +150,17 @@ public class DorisStreamLoadClient implements StreamLoadClient {
         dataQueue.drainTo(batch);
 
         if (batch.isEmpty()) {
-            log.logDebug("Batch is empty after drain, skipping flush");
             return;
         }
 
-        log.logBasic("Flushing " + batch.size() + " records to Doris");
+        log.logDetailed("Flushing " + batch.size() + " records to Doris");
         String data = String.join("\n", batch);
         sendStreamLoad(data);
     }
 
     private void sendStreamLoad(String data) throws Exception {
         String url = buildStreamLoadUrl();
-        log.logBasic("Sending Stream Load to Doris: URL=" + url + ", dataLength=" + data.length() + ", format=" + config.getFormat());
+        log.logDetailed("Sending Stream Load to Doris: URL=" + url + ", dataLength=" + data.length());
 
         HttpPut httpPut = new HttpPut(url);
 
@@ -175,7 +188,6 @@ public class DorisStreamLoadClient implements StreamLoadClient {
             String columns = java.util.Arrays.stream(config.getColumns())
                     .collect(java.util.stream.Collectors.joining(","));
             httpPut.setHeader("columns", columns);
-            log.logBasic("Setting columns header: " + columns);
         }
 
         if (config.getHeaderProperties() != null) {
@@ -190,14 +202,16 @@ public class DorisStreamLoadClient implements StreamLoadClient {
             String responseBody = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
             int statusCode = response.getStatusLine().getStatusCode();
 
-            log.logBasic("Doris Stream Load response: statusCode=" + statusCode + ", body=" + responseBody);
+            log.logDetailed("Doris Stream Load response: statusCode=" + statusCode);
 
             if (statusCode != 200) {
+                log.logError("Stream Load failed with status " + statusCode + ": " + responseBody);
                 throw new RuntimeException("Stream Load failed with status " + statusCode + ": " + responseBody);
             }
 
             // Check response body for Doris-specific status
             if (responseBody.contains("\"Status\": \"FAIL\"") || responseBody.contains("\"status\": \"FAIL\"")) {
+                log.logError("Stream Load failed: " + responseBody);
                 throw new RuntimeException("Stream Load failed: " + responseBody);
             }
         } catch (Exception e) {
@@ -235,7 +249,7 @@ public class DorisStreamLoadClient implements StreamLoadClient {
             httpClient = null;
         }
 
-        log.logBasic("Doris Stream Load client closed");
+        log.logBasic("Doris Stream Load client closed, total records written: " + totalRecordsWritten);
     }
 
     @Override
